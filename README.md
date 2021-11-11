@@ -12,5 +12,5 @@ It includes three files:
   - **print_time_hours**, printing time by the printer on a week.
   - **n_error**, number of error messages release by the printer on a week.
   - **rate**, raw error message rate (n_error/print_time_hours)
-3. *camanRunArticle.Rmd*, R Markdown script with the code required to replicate the article steps on the printerWeek data frame.
-4. *camanRunArticle.html*, user-friendly html file obtained from knitting the R Markdown *camanRunArticlelJoQT.Rmd*.
+3. *01_camanRunArticle.Rmd*, R Markdown script with the code required to replicate the article steps on the printerWeek data frame.
+4. *01_camanRunArticle.html*, user-friendly html file obtained from knitting the R Markdown *camanRunArticlelJoQT.Rmd*.
