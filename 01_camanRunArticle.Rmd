@@ -1,0 +1,359 @@
+---
+title: "R Script accompanying: “A mixture model application in monitoring error message rates for a distributed industrial fleet”"
+author: "Bernat Plandolit, Ignasi Puig, Gráinne Costigan, Xavi Puig, Lourdes Rodero and José Miguel Martínez"
+email: "ignasi.pui@upc.edu"
+date: "`r format(Sys.Date())`"
+autosize : true
+output: 
+  html_document:
+    toc: true
+    toc_depth: 2
+    number_sections: TRUE
+editor_options: 
+  chunk_output_type: console
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Libraries
+
+```{r librariesLoading, message=FALSE}
+
+library(CAMAN)
+library(tidyverse)
+library(ggplot2)
+
+```
+
+# Dataset 
+
+In order to avoid confidentiality issues this script uses a simulated data set. The dataset includes 400 printers observed during 27 weeks each. 
+
+The data is included in the RData file **printerWeek.RData** that has the data.frame **printerWeek** with the following columns:
+
+- *machine_id*, printer unique identification number (from 1 to 400).
+- *week*, recorded week (from 1 to 27).
+- *print_time_hours*, printing time on the given week.
+- *n_error*, total number of error messages broadcast by the printer on that week.
+- *rate*, the computed error rate (n_error/print_time_hours) for the printer week.
+
+```{r dataGenerations}
+
+load('printerWeek.RData')
+
+head(printerWeek)
+
+```
+
+# Computed Assisted Mixture Analysis
+
+## Flexible support size
+
+With the observed data, the CAMAN package function  with no fixed number of clusters proposes 4 clusters. 
+
+```{r flexClusters, eval = TRUE}
+
+Mixture_Model<-mixalg(obs=printerWeek$n_error, 
+                      family="poisson", 
+                      pop.at.risk=printerWeek$print_time_hours,
+                      startk=25)
+summary(Mixture_Model)
+
+```
+
+## Checking number of clusters
+
+The `mixlag` function tends to overestimate the number of clusters. In order to fine tune the proposed number of clusters from the initial estimation with flexible support, one needs to evaluate goodness-of-fit measures for models with different number of clusters. 
+
+The CAMAN package provides the function `mixalg.EM` to estimate cluster characteristics given a fixed number of clusters. This function provides goodness of fit estimates such as the model log-likelihood or BIC. 
+
+In the below chunk `mixalg.EM` is called several times (from 1 to 6 clusters) in order to estimate different cluster size models goodness-of-fit measures. 
+
+```{r fixedClusters, eval = TRUE}
+
+em = list(NULL)
+maxNoClusters = 6  #max. number of clusters to check
+em[[1]] <- mixalg.EM(Mixture_Model, p=1, t=1)
+
+for (i in 2:maxNoClusters) {
+  # 
+  # print(paste('checking',i,'clusters'))
+  
+  # proportion of observations with 0 messages
+  counts <- table(printerWeek$n_error)
+  
+  # loading proportion vector. Same proportion for all classes with some messages
+  prop = c(NULL)
+  prop[1]<-counts[1]/sum(counts)
+  
+  for (j in 2:i) prop[j] = (1-prop[1])/(i-1)
+  
+  # fixing lambdas for groups with some observations
+  dataNoZeros = printerWeek[printerWeek$n_error > 0,]
+  cutPoints = quantile(dataNoZeros$rate, 
+                       probs = seq(from = 0, to = 1,length.out = i),
+                       na.rm = T)
+  groups = cut(dataNoZeros$rate,
+               breaks = cutPoints,
+               include.lowest = T)
+  lam = c(0,sapply(split(dataNoZeros$rate,groups),mean))
+  
+  # compute CAMAN
+  em[[i]] = mixalg.EM(Mixture_Model, p=prop, t=lam)
+}
+
+em
+
+```
+
+The results show that the model log-likelihood improves up to the model with 4 clusters (LL = -13,688.63) and stays constant at that value from then on. BIC drops up to the model with 4 clusters (BIC = 27,442.27) to slightly increase from that number on. 
+
+The CAMAN library provides a function `anova` to estimate the distribution of the Likelihood ratio statistic between a null and proposed model using a parametric bootstrap. 
+
+```{r LR, eval = TRUE}
+
+set.seed(1914)
+
+anv = list(NULL)
+
+for (i in 1:(maxNoClusters-1)){
+   # print(paste('Iteration',i))
+   emA = em[[i]]
+   emB = em[[i+1]]
+   anv[[i]] = anova(emA,emB,
+                    nboot = 2500, 
+                    acc=0.002)
+   gc(reset=T)}
+
+res = data.frame(k = anv[[1]]$overview[,'k'],
+                 LR = anv[[1]]$overview[,'LL-ratio'],
+                 perc95 = c(NA,anv[[1]]$`LL ratios in bootstrap-data`['0.95']),
+                 BIC = anv[[1]]$overview[,'BIC'])
+for(i in 2:(maxNoClusters-1)) {
+  res = rbind(res,
+              data.frame(k = anv[[i]]$overview[2,'k'],
+                         LR = anv[[i]]$overview[2,'LL-ratio'],
+                         perc95 = c(anv[[i]]$`LL ratios in bootstrap-data`['0.95']),
+                         BIC = anv[[i]]$overview[2,'BIC']))
+}
+
+rownames(res) = res$k
+print(res)   
+```
+
+Each model is compared with the previous one as per the likelihood ratio statistic. Its likelihood ratio with the previous model (k = 3) is rejected at the 5% significance level making it significantly better than the one with 3 clusters. This does not happen with the likelihood ratio between models with 4 and 5 components. The k = 5 vs. k= 4 models likelihood ratio is smaller than the 95% critical value making this model non-significatively different from the k = 4 one. 
+
+The previous comparison table is equivalent to table 1 in the article.
+
+The CAMAN process proposes 4 clusters with rates 0, 1.4, 7.6 and 20 errors per hundred hours with 17%, 63%, 15% and 5%, very close to the simulated data source. 
+
+The below summary is equivalent to table 2 in the article. 
+
+```{r eval = TRUE}
+
+em[[4]]
+
+```
+
+
+# Empirical Bayes and clusters' assignment
+
+The chosen model can be used to estimate the error rate for printer i in week t, $\theta_{it}$ and the probability that printer i in week t belongs to cluster j. 
+
+## Clusters' assignment
+
+The probability of a printer-week belonging to a cluster can be computed with the model estimated parameters and the observed data as stated in formula 6 of the article.
+
+The CAMAN object resulting from the call to the `mixalg.EM` function stores these probabilities too. They can be directly accessed.  
+
+```{r probPredict, eval = TRUE}
+
+probabilities = em[[4]]@prob
+
+printerWeek[5238,]
+round(probabilities[5238,],4)
+
+```
+
+For instance, observations 5238 from printer 194 on week 27 with 17.44 printing hours and 1 error message in that week is assigned to cluster 2 with the highest probability of 67%.
+
+The CAMAN object also stores the most likely cluster the observation belongs to. In the previous case, it states class 2 (cluster 2) as the most likely. 
+
+```{r classPredict, eval = TRUE}
+
+class = em[[4]]@classification
+class[5238]
+
+```
+
+## Empirical Bayes error rate
+
+The empirical Bayes error rate for a printer-week has to be computed using formula 5 from the article.
+
+Printer 194 on week 27 (observation no. 5238) has a raw computed rate of 0.057 errors per hundred hours and a shrunken rate of 0.037 errors per hundred hours as it only printed 17.44 hours on that week compared to its mean weekly printing time of 36.26 hours
+
+```{r lambdaHat, eval = TRUE}
+
+# computing f(O_it|theta_it T_it) -formula 2- per cluster
+#
+# em[[4]]@t gives the model cluster rates
+l_it = printerWeek$print_time_hours %*% t(em[[4]]@t) 
+f_it = diag(1/factorial(printerWeek$n_error)) %*% (exp(-l_it) * l_it^(printerWeek$n_error))
+
+# computing hat(theta_it) -formula 5- per printer-weeks
+#
+hatTheta_it = f_it %*% (em[[4]]@t * em[[4]]@p)/(f_it %*% em[[4]]@p)
+
+hatTheta_it[5238]
+
+```
+
+# PERC and WPC plots
+
+The shrunken rates and the clusters' rate are graphed in the PERC and the WPC plots to visualize its time trends. These graphs are equivalent to figures 4 and 5 in the article. 
+
+We first create a data.frame for plotting purposes. The PERC and WPC plots for a given printer are built using a function for each graph. 
+
+```{r percPlot, message=FALSE}
+
+inter <- cbind(printerWeek,
+              hatTheta_it,
+              class,
+              probabilities)
+
+cluster_colors <- tibble(class = 1:4,
+                         clust_col = c("green3", "yellow2", "orange2", "red"))
+
+t1_cluster <- em[[4]]@t[1]
+t2_cluster <- em[[4]]@t[2]
+t3_cluster <- em[[4]]@t[3]
+t4_cluster <- em[[4]]@t[4]
+
+plot_data <- inter %>% 
+  group_by(machine_id) %>% 
+  arrange(machine_id, week) %>% 
+  mutate(hatTheta_it_1 = lag(hatTheta_it)) %>% 
+  mutate(WPC = (hatTheta_it - hatTheta_it_1)/hatTheta_it_1*100) %>% 
+  left_join(cluster_colors, by = c("class")) %>% 
+  mutate(t1_cluster = t1_cluster,
+         t2_cluster = t2_cluster,
+         t3_cluster = t3_cluster,
+         t4_cluster = t4_cluster)
+
+cluster_plot_with_time <- function(plot_data, id, cluster_colors,
+                         t1_cluster, t2_cluster, t3_cluster,
+                         t4_cluster, per_hundred = TRUE){
+  
+  to_plot <- plot_data %>% 
+    filter(machine_id == id) %>% 
+    {if(per_hundred == TRUE) 
+      mutate(., rate = rate*100,
+             hatTheta_it = hatTheta_it*100) else .}
+  
+  coeff_0 <- to_plot %>% pull(print_time_hours) %>% max()
+  
+  coeff <- t4_cluster * 100 / coeff_0
+  
+  to_plot %>% 
+    ggplot(aes(x = week)) +
+    geom_point(aes(y = hatTheta_it, col = factor(class))) +
+    geom_line(aes(y = hatTheta_it), alpha = 0.5) +
+    geom_bar(aes(y = print_time_hours * coeff), stat="identity", alpha = 0.1) + # Divide by 10 to get the same range than the rate
+    {if(per_hundred == TRUE)
+      geom_line(aes(y = t1_cluster*100), col = cluster_colors$clust_col[1], lty = "dashed")
+      else 
+        geom_line(aes(y = t1_cluster), col = cluster_colors$clust_col[1], lty = "dashed")} +
+        {if(per_hundred == TRUE)
+          geom_line(aes(y = t2_cluster*100), col = cluster_colors$clust_col[2], lty = "dashed")
+          else 
+            geom_line(aes(y = t2_cluster), col = cluster_colors$clust_col[2], lty = "dashed")} +
+            {if(per_hundred == TRUE)
+              geom_line(aes(y = t3_cluster*100), col = cluster_colors$clust_col[3], lty = "dashed")
+              else 
+                geom_line(aes(y = t3_cluster), col = cluster_colors$clust_col[3], lty = "dashed")} +
+                {if(per_hundred == TRUE)
+                  geom_line(aes(y = t4_cluster*100), col = cluster_colors$clust_col[4], lty = "dashed")
+                  else 
+                    geom_line(aes(y = t4_cluster), col = cluster_colors$clust_col[4], lty = "dashed")} +
+    scale_colour_manual(values = cluster_colors$clust_col[cluster_colors$clust_col %in% unique(to_plot$clust_col)],
+                        guide = FALSE) +
+    scale_x_continuous(breaks = seq(1, 27, 5), labels = seq(1, 27, 5)) +
+    {if(per_hundred == TRUE) 
+      scale_y_continuous(name = "Shrinked Message Rate per Hundred Hours",
+                         sec.axis = sec_axis(~./coeff, name = "Primting Time [Hours]"))
+      else 
+        scale_y_continuous(name = "Shrinked Message Rate per Hour",
+                           sec.axis = sec_axis(~./coeff, name = "Printing Time [Hours]"))} +
+    xlab("Week") +
+    theme_light()
+  
+}
+
+wpc_plot <- function(plot_data, id, cluster_colors){
+  
+  to_plot <- plot_data %>% 
+    filter(machine_id == id)
+  
+  to_plot %>% 
+    ggplot(aes(x = week)) +
+    geom_point(aes(y = WPC, col = factor(class))) +
+    geom_line(aes(y = WPC), alpha = 0.5) +
+    geom_hline(yintercept = 0, alpha = 0.5, lty = "dashed") +
+    scale_colour_manual(values = cluster_colors$clust_col[cluster_colors$clust_col %in% unique(to_plot$clust_col)],
+                                               guide = FALSE) +
+    scale_x_continuous(breaks = seq(1, 27, 5), labels = seq(1, 27, 5)) +
+    xlab("Week") +
+    ylab("WPC (%)") +
+    theme_light()
+  
+}
+
+
+```
+
+Some sample machines are shown: printer 2 and 320.
+
+## Example: Printer 2
+
+Printer 2 has a very small message rate. It fluctuates between cluster 1 (green) and cluster 2 (yellow). 
+
+The WPC plot shows rates fluctuating within a normal range. There is a peak in week 19 when the printer moves from cluster 1 to 2 raising an alarm.
+
+```{r plotPerId1, message=FALSE, warning=FALSE}
+
+id <- 2
+
+cluster_plot_with_time(plot_data, id = id, cluster_colors,
+                         t1_cluster, t2_cluster, t3_cluster,
+                         t4_cluster, per_hundred = TRUE)
+
+wpc_plot(plot_data, id = id, cluster_colors)
+
+```
+
+
+## Example: Printer 320
+
+Printer 320 has some high rates and cluster changes in the first 6 weeks. It stays stable afterwards and shows a final increase in the last observed weeks. 
+
+This same behavior is seen in the WPC plot. It shows peaks in the weeks with cluster assignment changes (weeks 4, 6, 21 and 24) where there are spikes coinciding with cluster changes.
+
+```{r plotPerId2, message=FALSE, warning=FALSE}
+
+id <- 320
+
+cluster_plot_with_time(plot_data, id = id, cluster_colors,
+                         t1_cluster, t2_cluster, t3_cluster,
+                         t4_cluster, per_hundred = TRUE)
+
+wpc_plot(plot_data, id = id, cluster_colors)
+
+```
+
+# Bibliography
+
+Böhning D (1999). *Computer-Assisted Analysis of Mixtures and Applications: Meta-Analysis, Disease Mapping and Others.* Chapman & Hall/CRC. New York.
+
+Schlattmann P (2009). *Medical applications of finite mixture models.* Springer-Verlag. Berlin.
