@@ -1,6 +1,6 @@
 # A mixture model application in monitoring error message rates for a distributed industrial fleet
 
-https://zenodo.org/badge/latestdoi/426967950
+https://doi.org/10.5281/zenodo.5675789
 
 This repository includes the material required to replicate the analysis done in the article "A mixture model application in monitoring error message
 rates for a distributed industrial fleet".
