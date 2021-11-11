@@ -3,7 +3,7 @@
 
 
 This repository includes the material required to replicate the analysis done in the article "A mixture model application in monitoring error message
-rates for a distributed industrial fleet" published in the Journal of Quality Technology.
+rates for a distributed industrial fleet".
 
 It includes three files:
 1. *printerWeek.RData* file including the data frame printerWeek with 400 printers tracked during 27 weeks. The variables are:
