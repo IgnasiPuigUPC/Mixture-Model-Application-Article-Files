@@ -55,7 +55,8 @@ With the observed data, the CAMAN package function  with no fixed number of clus
 
 ```{r flexClusters, eval = TRUE}
 
-Mixture_Model<-mixalg(obs=printerWeek$n_error, 
+Mixture_Model<-mixalg(obs='n_error', 
+                      data=printerWeek,
                       family="poisson", 
                       pop.at.risk=printerWeek$print_time_hours,
                       startk=25)
@@ -79,7 +80,7 @@ em[[1]] <- mixalg.EM(Mixture_Model, p=1, t=1)
 
 for (i in 2:maxNoClusters) {
   # 
-  # print(paste('checking',i,'clusters'))
+  print(paste('checking',i,'clusters'))
   
   # proportion of observations with 0 messages
   counts <- table(printerWeek$n_error)
@@ -119,31 +120,38 @@ set.seed(1914)
 anv = list(NULL)
 
 for (i in 1:(maxNoClusters-1)){
-   # print(paste('Iteration',i))
-   emA = em[[i]]
-   emB = em[[i+1]]
-   anv[[i]] = anova(emA,emB,
-                    nboot = 2500, 
-                    acc=0.002)
-   gc(reset=T)}
+  
+  print(paste('Iteration',i))
+  emA = em[[i]]
+  emB = em[[i+1]]
+  anv[[i]] = anova(emA,emB,
+                  nboot = 2500, 
+                  acc=0.002)
+  gc(reset=T)
+  
+}
 
 res = data.frame(k = anv[[1]]$overview[,'k'],
                  LR = anv[[1]]$overview[,'LL-ratio'],
                  perc95 = c(NA,anv[[1]]$`LL ratios in bootstrap-data`['0.95']),
                  BIC = anv[[1]]$overview[,'BIC'])
+
 for(i in 2:(maxNoClusters-1)) {
+  
+  print(paste('Iteration',i))
   res = rbind(res,
               data.frame(k = anv[[i]]$overview[2,'k'],
                          LR = anv[[i]]$overview[2,'LL-ratio'],
                          perc95 = c(anv[[i]]$`LL ratios in bootstrap-data`['0.95']),
                          BIC = anv[[i]]$overview[2,'BIC']))
+  
 }
 
 rownames(res) = res$k
 print(res)   
 ```
 
-Each model is compared with the previous one as per the likelihood ratio statistic. Its likelihood ratio with the previous model (k = 3) is rejected at the 5% significance level making it significantly better than the one with 3 clusters. This does not happen with the likelihood ratio between models with 4 and 5 components. The k = 5 vs. k= 4 models likelihood ratio is smaller than the 95% critical value making this model non-significatively different from the k = 4 one. 
+Each model is compared with the previous one as per the likelihood ratio statistic. Its likelihood ratio with the previous model (k = 3) is rejected at the 5% significance level making it significantly better than the one with 3 clusters. This does not happen with the likelihood ratio between models with 4 and 5 components. The k = 5 vs. k= 4 models likelihood ratio is smaller than the 95% critical value making this model non-significantly different from the k = 4 one. 
 
 The previous comparison table is equivalent to table 1 in the article.
 
@@ -156,7 +164,6 @@ The below summary is equivalent to table 2 in the article.
 em[[4]]
 
 ```
-
 
 # Empirical Bayes and clusters' assignment
 
